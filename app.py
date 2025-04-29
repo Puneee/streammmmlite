@@ -20,40 +20,39 @@ from tensorflow.keras.layers  import Input, Dense
 
 sns.set_theme(style="ticks")
 
-# ———— LOAD & SPLIT DATA ————
+# ——— LOAD & COMBINE CSVs ———
 @st.cache_data
 def load_and_split():
-    # column names
     cols = [
-      "duration","protocol_type","service","flag","src_bytes","dst_bytes","land",
-      "wrong_fragment","urgent","hot","num_failed_logins","logged_in","num_compromised",
-      "root_shell","su_attempted","num_root","num_file_creations","num_shells",
-      "num_access_files","num_outbound_cmds","is_host_login","is_guest_login",
-      "count","srv_count","serror_rate","srv_serror_rate","rerror_rate",
-      "srv_rerror_rate","same_srv_rate","diff_srv_rate","srv_diff_host_rate",
-      "dst_host_count","dst_host_srv_count","dst_host_same_srv_rate",
-      "dst_host_diff_srv_rate","dst_host_same_src_port_rate",
-      "dst_host_srv_diff_host_rate","dst_host_serror_rate",
-      "dst_host_srv_serror_rate","dst_host_rerror_rate","dst_host_srv_rerror_rate",
-      "label"
+        "duration","protocol_type","service","flag","src_bytes","dst_bytes","land",
+        "wrong_fragment","urgent","hot","num_failed_logins","logged_in","num_compromised",
+        "root_shell","su_attempted","num_root","num_file_creations","num_shells",
+        "num_access_files","num_outbound_cmds","is_host_login","is_guest_login",
+        "count","srv_count","serror_rate","srv_serror_rate","rerror_rate",
+        "srv_rerror_rate","same_srv_rate","diff_srv_rate","srv_diff_host_rate",
+        "dst_host_count","dst_host_srv_count","dst_host_same_srv_rate",
+        "dst_host_diff_srv_rate","dst_host_same_src_port_rate",
+        "dst_host_srv_diff_host_rate","dst_host_serror_rate",
+        "dst_host_srv_serror_rate","dst_host_rerror_rate","dst_host_srv_rerror_rate",
+        "label"
     ]
-    # read both CSVs
     df1 = pd.read_csv("NSL_KDD_Train.csv", names=cols)
     df2 = pd.read_csv("NSL_KDD_Test.csv",  names=cols)
-    # combine
-    df = pd.concat([df1, df2], ignore_index=True)
-    # stratify on the raw label string, preserve proportion of "normal" vs attacks
+    df  = pd.concat([df1, df2], ignore_index=True)
+    # simple random split
     train_df, test_df = train_test_split(
-        df, test_size=0.2, shuffle=True,
-        stratify=df["label"], random_state=42
+        df,
+        test_size=0.2,
+        shuffle=True,
+        random_state=42
     )
     return train_df.reset_index(drop=True), test_df.reset_index(drop=True)
 
-# ———— PREPROCESSOR ————
+# ——— PREPROCESSOR ———
 def preprocess_data(train_df, test_df):
     cat_cols = ['protocol_type','service','flag']
 
-    # 1) encode categorical features
+    # encode categoricals
     for c in cat_cols:
         le = LabelEncoder()
         train_df[c] = train_df[c].astype(str)
@@ -62,15 +61,14 @@ def preprocess_data(train_df, test_df):
         train_df[c] = le.transform(train_df[c])
         test_df[c]  = le.transform(test_df[c])
 
-    # 2) map labels: exact "normal" ➞ 0, else 1
+    # map labels: exact "normal" → 0, else 1
     def map_label(x):
-        s = str(x).strip().lower()
-        return 0 if s == "normal" else 1
+        return 0 if str(x).strip().lower() == "normal" else 1
 
     train_df['label'] = train_df['label'].apply(map_label)
     test_df ['label'] = test_df ['label'].apply(map_label)
 
-    # 3) extract X/y and force numeric dtypes
+    # force numeric features + fill NaN → 0
     X_tr = (train_df.drop('label', axis=1)
             .apply(pd.to_numeric, errors='coerce')
             .fillna(0)
@@ -85,7 +83,7 @@ def preprocess_data(train_df, test_df):
 
     return X_tr, y_tr, X_te, y_te
 
-# ———— AUTOENCODER BUILDER ————
+# ——— AUTOENCODER BUILDER ———
 def build_autoencoder(dim):
     inp = Input(shape=(dim,))
     e   = Dense(32, activation='relu')(inp)
@@ -96,22 +94,21 @@ def build_autoencoder(dim):
     m.compile(optimizer='adam', loss='mse')
     return m
 
-# ———— STREAMLIT UI ————
-st.title("🚦 Network Traffic Inspector (Streamlit)")
+# ——— STREAMLIT APP ———
+st.title("🚦 Network Traffic Inspector")
 
-# load+split, then preprocess
 train_df, test_df = load_and_split()
 X_train, y_train, X_test, y_test = preprocess_data(train_df, test_df)
 
 if st.button("Run Models 🚀"):
-    with st.spinner("Training models…"):
+    with st.spinner("Training…"):
 
         # Random Forest
         rf   = RandomForestClassifier(n_estimators=100, random_state=42)
         rf.fit(X_train, y_train)
         y_rf = rf.predict(X_test)
 
-        # show class balance
+        # show train class counts
         counts = np.bincount(y_train)
         st.write("🔢 y_train class counts:", {0:int(counts[0]), 1:int(counts[1])})
 
@@ -123,7 +120,7 @@ if st.button("Run Models 🚀"):
         svm.fit(X_tr_s, y_train)
         y_svm = svm.predict(X_te_s)
 
-        # Autoencoder (normal only)
+        # Autoencoder (normals only)
         X_norm = X_train[y_train==0]
         sc_ae  = StandardScaler()
         X_ae_tr= sc_ae.fit_transform(X_norm)
@@ -137,11 +134,11 @@ if st.button("Run Models 🚀"):
         thr    = np.percentile(mse, 95)
         y_ae   = (mse>thr).astype(int)
 
-    # Display
+    # Display results
     st.header("✅ Results")
-    st.write(f"Random Forest Acc:   **{accuracy_score(y_test, y_rf):.4f}**")
-    st.write(f"SVM Acc:             **{accuracy_score(y_test, y_svm):.4f}**")
-    st.write(f"Autoencoder Acc:     **{accuracy_score(y_test, y_ae):.4f}**")
+    st.write(f"Random Forest Acc:   {accuracy_score(y_test,y_rf):.4f}")
+    st.write(f"SVM Acc:             {accuracy_score(y_test,y_svm):.4f}")
+    st.write(f"Autoencoder Acc:     {accuracy_score(y_test,y_ae):.4f}")
 
     cm = confusion_matrix(y_test, y_rf)
     fig, ax = plt.subplots()
@@ -151,4 +148,4 @@ if st.button("Run Models 🚀"):
     ax.set(xlabel="Predicted", ylabel="Actual")
     st.pyplot(fig)
 
-    st.success("All done! 🎉")
+    st.success("Done! 🎉")
