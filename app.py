@@ -61,10 +61,11 @@ def preprocess_data(train_df, test_df):
     X_test  = test_df.drop('label',  axis=1).apply(pd.to_numeric, errors="coerce").fillna(0)
     # --------------------------------------
 
-    y_train = train_df['label'].astype(int)
-    y_test  = test_df['label'].astype(int)
+    y_train = train_df['label'].astype("int32").to_numpy()
+    y_test  = test_df['label'].astype("int32").to_numpy()
 
     return X_train, y_train, X_test, y_test
+
 
 
 
@@ -93,7 +94,8 @@ if st.button("Run Models 🚀"):
         rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
         rf_model.fit(X_train, y_train)
         y_pred_rf = rf_model.predict(X_test)
-        
+        st.write("y dtype:", y_train.dtype, "   unique:", np.unique(y_train)[:10])
+        st.write("any nulls in y?", y_train.isna().sum())
         # SVM
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
