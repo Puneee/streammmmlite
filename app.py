@@ -9,41 +9,51 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.ensemble    import RandomForestClassifier
-from sklearn.svm         import SVC
-from sklearn.metrics     import accuracy_score, confusion_matrix
+from sklearn.preprocessing   import LabelEncoder, StandardScaler
+from sklearn.ensemble        import RandomForestClassifier
+from sklearn.svm             import SVC
+from sklearn.metrics         import accuracy_score, confusion_matrix
+from sklearn.model_selection import train_test_split
 
 from tensorflow.keras.models  import Model
 from tensorflow.keras.layers  import Input, Dense
 
 sns.set_theme(style="ticks")
 
-# ——— DATA LOADER ———
+# ———— LOAD & SPLIT DATA ————
 @st.cache_data
-def load_data():
+def load_and_split():
+    # column names
     cols = [
-        "duration","protocol_type","service","flag","src_bytes","dst_bytes","land",
-        "wrong_fragment","urgent","hot","num_failed_logins","logged_in","num_compromised",
-        "root_shell","su_attempted","num_root","num_file_creations","num_shells",
-        "num_access_files","num_outbound_cmds","is_host_login","is_guest_login",
-        "count","srv_count","serror_rate","srv_serror_rate","rerror_rate",
-        "srv_rerror_rate","same_srv_rate","diff_srv_rate","srv_diff_host_rate",
-        "dst_host_count","dst_host_srv_count","dst_host_same_srv_rate",
-        "dst_host_diff_srv_rate","dst_host_same_src_port_rate",
-        "dst_host_srv_diff_host_rate","dst_host_serror_rate",
-        "dst_host_srv_serror_rate","dst_host_rerror_rate","dst_host_srv_rerror_rate",
-        "label"
+      "duration","protocol_type","service","flag","src_bytes","dst_bytes","land",
+      "wrong_fragment","urgent","hot","num_failed_logins","logged_in","num_compromised",
+      "root_shell","su_attempted","num_root","num_file_creations","num_shells",
+      "num_access_files","num_outbound_cmds","is_host_login","is_guest_login",
+      "count","srv_count","serror_rate","srv_serror_rate","rerror_rate",
+      "srv_rerror_rate","same_srv_rate","diff_srv_rate","srv_diff_host_rate",
+      "dst_host_count","dst_host_srv_count","dst_host_same_srv_rate",
+      "dst_host_diff_srv_rate","dst_host_same_src_port_rate",
+      "dst_host_srv_diff_host_rate","dst_host_serror_rate",
+      "dst_host_srv_serror_rate","dst_host_rerror_rate","dst_host_srv_rerror_rate",
+      "label"
     ]
-    train = pd.read_csv("NSL_KDD_Train.csv", names=cols)
-    test  = pd.read_csv("NSL_KDD_Test.csv",  names=cols)
-    return train, test
+    # read both CSVs
+    df1 = pd.read_csv("NSL_KDD_Train.csv", names=cols)
+    df2 = pd.read_csv("NSL_KDD_Test.csv",  names=cols)
+    # combine
+    df = pd.concat([df1, df2], ignore_index=True)
+    # stratify on the raw label string, preserve proportion of "normal" vs attacks
+    train_df, test_df = train_test_split(
+        df, test_size=0.2, shuffle=True,
+        stratify=df["label"], random_state=42
+    )
+    return train_df.reset_index(drop=True), test_df.reset_index(drop=True)
 
-# ——— PREPROCESSOR ———
+# ———— PREPROCESSOR ————
 def preprocess_data(train_df, test_df):
     cat_cols = ['protocol_type','service','flag']
 
-    # 1) Encode categoricals
+    # 1) encode categorical features
     for c in cat_cols:
         le = LabelEncoder()
         train_df[c] = train_df[c].astype(str)
@@ -52,24 +62,20 @@ def preprocess_data(train_df, test_df):
         train_df[c] = le.transform(train_df[c])
         test_df[c]  = le.transform(test_df[c])
 
-    # 2) Show raw label variants (debug once, then you can comment out)
-    raw_labels = pd.concat([train_df['label'], test_df['label']], axis=0)
-    st.write("🔍 Raw label variants:", raw_labels.astype(str).unique())
-
-    # 3) Map any label containing "normal" → 0, else 1
+    # 2) map labels: exact "normal" ➞ 0, else 1
     def map_label(x):
         s = str(x).strip().lower()
-        return 0 if "normal" in s else 1
+        return 0 if s == "normal" else 1
 
     train_df['label'] = train_df['label'].apply(map_label)
     test_df ['label'] = test_df ['label'].apply(map_label)
 
-    # 4) Force numeric features + fill missing
-    X_tr = (train_df.drop('label',axis=1)
+    # 3) extract X/y and force numeric dtypes
+    X_tr = (train_df.drop('label', axis=1)
             .apply(pd.to_numeric, errors='coerce')
             .fillna(0)
             .to_numpy())
-    X_te = (test_df .drop('label',axis=1)
+    X_te = (test_df .drop('label', axis=1)
             .apply(pd.to_numeric, errors='coerce')
             .fillna(0)
             .to_numpy())
@@ -79,7 +85,7 @@ def preprocess_data(train_df, test_df):
 
     return X_tr, y_tr, X_te, y_te
 
-# ——— AUTOENCODER BUILDER ———
+# ———— AUTOENCODER BUILDER ————
 def build_autoencoder(dim):
     inp = Input(shape=(dim,))
     e   = Dense(32, activation='relu')(inp)
@@ -90,66 +96,54 @@ def build_autoencoder(dim):
     m.compile(optimizer='adam', loss='mse')
     return m
 
-# ——— STREAMLIT UI ———
+# ———— STREAMLIT UI ————
 st.title("🚦 Network Traffic Inspector (Streamlit)")
 
-train_df, test_df = load_data()
+# load+split, then preprocess
+train_df, test_df = load_and_split()
 X_train, y_train, X_test, y_test = preprocess_data(train_df, test_df)
 
 if st.button("Run Models 🚀"):
-    with st.spinner("🔄 Training…"):
+    with st.spinner("Training models…"):
 
         # Random Forest
         rf   = RandomForestClassifier(n_estimators=100, random_state=42)
         rf.fit(X_train, y_train)
         y_rf = rf.predict(X_test)
 
-        # Show class balance
+        # show class balance
         counts = np.bincount(y_train)
         st.write("🔢 y_train class counts:", {0:int(counts[0]), 1:int(counts[1])})
 
-        # SVM (only if both classes present)
-        if len(counts)>1 and counts.min()>0:
-            scaler = StandardScaler()
-            X_tr_s = scaler.fit_transform(X_train)
-            X_te_s = scaler.transform(X_test)
-            svm = SVC(kernel='rbf', gamma='scale')
-            svm.fit(X_tr_s, y_train)
-            y_svm = svm.predict(X_te_s)
-            svm_acc = accuracy_score(y_test, y_svm)
-        else:
-            y_svm = None
-            svm_acc = None
-            st.warning("⚠️ Skipping SVM (need both classes).")
+        # SVM
+        scaler = StandardScaler()
+        X_tr_s = scaler.fit_transform(X_train)
+        X_te_s = scaler.transform(X_test)
+        svm = SVC(kernel='rbf', gamma='scale')
+        svm.fit(X_tr_s, y_train)
+        y_svm = svm.predict(X_te_s)
 
-        # Autoencoder (only if both classes present)
-        if len(counts)>1 and counts.min()>0:
-            X_norm = X_train[y_train==0]
-            sc_ae  = StandardScaler()
-            X_ae_tr= sc_ae.fit_transform(X_norm)
-            X_ae_te= sc_ae.transform(X_test)
-            ae     = build_autoencoder(X_ae_tr.shape[1])
-            ae.fit(X_ae_tr, X_ae_tr,
-                   epochs=20, batch_size=256,
-                   shuffle=True, validation_split=0.1, verbose=0)
-            recon  = ae.predict(X_ae_te)
-            mse    = np.mean((X_ae_te-recon)**2, axis=1)
-            thr    = np.percentile(mse,95)
-            y_ae   = (mse>thr).astype(int)
-            ae_acc = accuracy_score(y_test, y_ae)
-        else:
-            y_ae   = None
-            ae_acc = None
+        # Autoencoder (normal only)
+        X_norm = X_train[y_train==0]
+        sc_ae  = StandardScaler()
+        X_ae_tr= sc_ae.fit_transform(X_norm)
+        X_ae_te= sc_ae.transform(X_test)
+        ae     = build_autoencoder(X_ae_tr.shape[1])
+        ae.fit(X_ae_tr, X_ae_tr,
+               epochs=20, batch_size=256,
+               shuffle=True, validation_split=0.1, verbose=0)
+        recon  = ae.predict(X_ae_te)
+        mse    = np.mean((X_ae_te - recon)**2, axis=1)
+        thr    = np.percentile(mse, 95)
+        y_ae   = (mse>thr).astype(int)
 
-    # — Display
+    # Display
     st.header("✅ Results")
-    st.write(f"**Random Forest Acc:** {accuracy_score(y_test,y_rf):.4f}")
-    if svm_acc is not None:
-        st.write(f"**SVM Acc:**            {svm_acc:.4f}")
-    if ae_acc is not None:
-        st.write(f"**Autoencoder Acc:**    {ae_acc:.4f}")
+    st.write(f"Random Forest Acc:   **{accuracy_score(y_test, y_rf):.4f}**")
+    st.write(f"SVM Acc:             **{accuracy_score(y_test, y_svm):.4f}**")
+    st.write(f"Autoencoder Acc:     **{accuracy_score(y_test, y_ae):.4f}**")
 
-    cm = confusion_matrix(y_test,y_rf)
+    cm = confusion_matrix(y_test, y_rf)
     fig, ax = plt.subplots()
     sns.heatmap(cm, annot=True, fmt='d', cmap="Blues",
                 xticklabels=["Normal","Attack"],
