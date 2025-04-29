@@ -40,14 +40,14 @@ def load_data():
 # Preprocess dataset
 def preprocess_data(train_df, test_df):
     categorical_cols = ['protocol_type', 'service', 'flag']
-    
+    encoders = {}
     for col in categorical_cols:
         le = LabelEncoder()
         combined_data = pd.concat([train_df[col], test_df[col]], axis=0)
-        le.fit(combined_data)
-        train_df[col] = le.fit_transform(train_df[col])
+        le.fit(combined)
+        train_df[col] = le.transform(train_df[col])
         test_df[col] = le.transform(test_df[col])
-    
+        encoders[col] = le
     train_df['label'] = train_df['label'].apply(lambda x: 0 if x == 'normal' else 1)
     test_df['label'] = test_df['label'].apply(lambda x: 0 if x == 'normal' else 1)
     
