@@ -43,10 +43,10 @@ def preprocess_data(train_df, test_df):
     encoders = {}
     for col in categorical_cols:
         le = LabelEncoder()
-        combined_data = pd.concat([train_df[col], test_df[col]], axis=0)
+        combined_data = pd.concat([train_df[col], test_df[col]], axis=0).astype(str)
         le.fit(combined_data)
-        train_df[col] = le.transform(train_df[col])
-        test_df[col] = le.transform(test_df[col])
+        train_df[col] = le.transform(train_df[col]).astype(str)
+        test_df[col] = le.transform(test_df[col]).astype(str)
         encoders[col] = le
     train_df['label'] = train_df['label'].apply(lambda x: 0 if x == 'normal' else 1)
     test_df['label'] = test_df['label'].apply(lambda x: 0 if x == 'normal' else 1)
