@@ -40,35 +40,32 @@ def load_data():
 # Preprocess dataset
 def preprocess_data(train_df, test_df):
     categorical_cols = ['protocol_type', 'service', 'flag']
-    encoders = {}
 
     for col in categorical_cols:
         le = LabelEncoder()
 
-        # First, convert to string
+        # make both sides strings **before** fitting
         train_df[col] = train_df[col].astype(str)
-        test_df[col] = test_df[col].astype(str)
+        test_df[col]  = test_df[col].astype(str)
 
-        # Combine and fit
-        combined_data = pd.concat([train_df[col], test_df[col]], axis=0)
-        le.fit(combined_data)
-
-        # THEN transform separately
+        le.fit(pd.concat([train_df[col], test_df[col]]))
         train_df[col] = le.transform(train_df[col])
-        test_df[col] = le.transform(test_df[col])
+        test_df[col]  = le.transform(test_df[col])
 
-        encoders[col] = le
+    # binary label
+    train_df['label'] = (train_df['label'] != 'normal').astype(int)
+    test_df['label']  = (test_df['label']  != 'normal').astype(int)
 
-    # Label column
-    train_df['label'] = train_df['label'].apply(lambda x: 0 if x == 'normal' else 1)
-    test_df['label'] = test_df['label'].apply(lambda x: 0 if x == 'normal' else 1)
+    # --- NEW: guarantee numeric dtypes ---
+    X_train = train_df.drop('label', axis=1).apply(pd.to_numeric, errors="coerce").fillna(0)
+    X_test  = test_df.drop('label',  axis=1).apply(pd.to_numeric, errors="coerce").fillna(0)
+    # --------------------------------------
 
-    X_train = train_df.drop('label', axis=1)
-    y_train = train_df['label']
-    X_test = test_df.drop('label', axis=1)
-    y_test = test_df['label']
+    y_train = train_df['label'].astype(int)
+    y_test  = test_df['label'].astype(int)
 
     return X_train, y_train, X_test, y_test
+
 
 
 # Autoencoder model
