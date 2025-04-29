@@ -19,7 +19,7 @@ from tensorflow.keras.layers  import Input, Dense
 
 sns.set_theme(style="ticks")
 
-# —————— DATA LOADER ——————
+# ———— DATA LOADER ————
 @st.cache_data
 def load_data():
     cols = [
@@ -39,10 +39,11 @@ def load_data():
     test  = pd.read_csv("NSL_KDD_Test.csv",  names=cols)
     return train, test
 
-# —————— PREPROCESSOR ——————
+# ———— PREPROCESSOR ————
 def preprocess_data(train_df, test_df):
     cat_cols = ['protocol_type','service','flag']
-    # encode categoricals
+
+    # 1) Encode categoricals
     for c in cat_cols:
         le = LabelEncoder()
         train_df[c] = train_df[c].astype(str)
@@ -50,14 +51,16 @@ def preprocess_data(train_df, test_df):
         le.fit(pd.concat([train_df[c], test_df[c]]))
         train_df[c] = le.transform(train_df[c])
         test_df[c]  = le.transform(test_df[c])
-    # map label → 0 if contains "normal" else 1
-    train_df['label'] = np.where(
-        train_df['label'].astype(str).str.lower().str.contains("normal"), 0, 1
-    )
-    test_df['label']  = np.where(
-        test_df['label'].astype(str).str.lower().str.contains("normal"), 0, 1
-    )
-    # force numeric and fill any stray NaNs
+
+    # 2) Clean, strip, lowercase labels; map exact "normal" → 0, else 1
+    def map_label(x):
+        s = str(x).strip().lower()
+        return 0 if s == "normal" else 1
+
+    train_df['label'] = train_df['label'].apply(map_label)
+    test_df ['label'] = test_df ['label'].apply(map_label)
+
+    # 3) Force numeric feature matrix + fill any NaNs
     X_tr = (train_df.drop('label',axis=1)
             .apply(pd.to_numeric,errors='coerce')
             .fillna(0)
@@ -66,86 +69,89 @@ def preprocess_data(train_df, test_df):
             .apply(pd.to_numeric,errors='coerce')
             .fillna(0)
             .to_numpy())
+
+    # 4) Targets as 1-D int32 arrays
     y_tr = train_df['label'].astype('int32').to_numpy()
     y_te = test_df ['label'].astype('int32').to_numpy()
+
     return X_tr, y_tr, X_te, y_te
 
-# —————— AUTOENCODER BUILDER ——————
+# ———— AUTOENCODER BUILDER ————
 def build_autoencoder(dim):
     inp = Input(shape=(dim,))
     e = Dense(32, activation='relu')(inp)
     e = Dense(16, activation='relu')(e)
     d = Dense(32, activation='relu')(e)
-    out = Dense(dim, activation='linear')(d)
+    out= Dense(dim, activation='linear')(d)
     m = Model(inp, out)
     m.compile(optimizer='adam', loss='mse')
     return m
 
-# —————— STREAMLIT UI ——————
+# ———— STREAMLIT UI ————
 st.title("🚦 Network Traffic Inspector (Streamlit)")
 
-# load + preprocess
 train_df, test_df = load_data()
-X_train, y_train, X_test,  y_test = preprocess_data(train_df, test_df)
+X_train, y_train, X_test, y_test = preprocess_data(train_df, test_df)
 
 if st.button("Run Models 🚀"):
-    with st.spinner("🔄 Training models..."):
-        # — Random Forest —
-        rf = RandomForestClassifier(n_estimators=100, random_state=42)
+    with st.spinner("🔄 Training…"):
+
+        # Random Forest
+        rf   = RandomForestClassifier(n_estimators=100, random_state=42)
         rf.fit(X_train, y_train)
         y_rf = rf.predict(X_test)
 
-        # debug: show class distribution
+        # Show class balance
         counts = np.bincount(y_train)
-        st.write("🧮 y_train class counts:", {0:int(counts[0]), 1:int(counts[1])})
+        st.write("🔢 y_train class counts:", {0: int(counts[0]), 1: int(counts[1])})
 
-        # only run SVM if both classes present
-        if len(counts) < 2 or counts.min() == 0:
-            st.warning("⚠️ Only one class present in training data; skipping SVM & Autoencoder.")
-            run_svm = False
-        else:
-            run_svm = True
-
-        # — SVM —
-        if run_svm:
+        # SVM (only if both classes present)
+        if len(counts)>1 and counts.min()>0:
             scaler = StandardScaler()
             X_tr_s = scaler.fit_transform(X_train)
             X_te_s = scaler.transform(X_test)
             svm = SVC(kernel='rbf', gamma='scale')
             svm.fit(X_tr_s, y_train)
             y_svm = svm.predict(X_te_s)
+            svm_acc = accuracy_score(y_test, y_svm)
         else:
-            y_svm = np.array([])
+            y_svm = None
+            svm_acc = None
+            st.warning("⚠️ Skipping SVM (need both classes).")
 
-        # — Autoencoder —
-        if run_svm:
-            X_norm = X_train[y_train==0]
-            sc_ae = StandardScaler()
-            X_ae_tr = sc_ae.fit_transform(X_norm)
-            X_ae_te = sc_ae.transform(X_test)
-            ae = build_autoencoder(X_ae_tr.shape[1])
-            ae.fit(X_ae_tr, X_ae_tr, epochs=20, batch_size=256,
+        # Autoencoder (only if both classes present)
+        if len(counts)>1 and counts.min()>0:
+            X_norm   = X_train[y_train==0]
+            sc_ae    = StandardScaler()
+            X_ae_tr  = sc_ae.fit_transform(X_norm)
+            X_ae_te  = sc_ae.transform(X_test)
+            ae       = build_autoencoder(X_ae_tr.shape[1])
+            ae.fit(X_ae_tr, X_ae_tr,
+                   epochs=20, batch_size=256,
                    shuffle=True, validation_split=0.1, verbose=0)
-            recon = ae.predict(X_ae_te)
-            mse   = np.mean((X_ae_te - recon)**2, axis=1)
-            thr   = np.percentile(mse,95)
-            y_ae  = (mse>thr).astype(int)
+            recon    = ae.predict(X_ae_te)
+            mse      = np.mean((X_ae_te-recon)**2, axis=1)
+            thr      = np.percentile(mse, 95)
+            y_ae     = (mse>thr).astype(int)
+            ae_acc   = accuracy_score(y_test, y_ae)
         else:
-            y_ae = np.array([])
+            y_ae   = None
+            ae_acc = None
 
-    # — DISPLAY —
-    st.subheader("✅ Results")
-    st.write(f"Random Forest Acc: **{accuracy_score(y_test,y_rf):.4f}**")
-    if run_svm:
-        st.write(f"SVM Acc: **{accuracy_score(y_test,y_svm):.4f}**")
-        st.write(f"Autoencoder Acc: **{accuracy_score(y_test,y_ae):.4f}**")
+    # ———— DISPLAY RESULTS ————
+    st.markdown("## ✅ Results")
+    st.write(f"**Random Forest Acc:** {accuracy_score(y_test,y_rf):.4f}")
+    if svm_acc is not None:
+        st.write(f"**SVM Acc:**            {svm_acc:.4f}")
+    if ae_acc is not None:
+        st.write(f"**Autoencoder Acc:**    {ae_acc:.4f}")
 
-    cm = confusion_matrix(y_test,y_rf)
-    fig,ax = plt.subplots()
-    sns.heatmap(cm,annot=True,fmt='d',cmap="Blues",
+    cm = confusion_matrix(y_test, y_rf)
+    fig, ax = plt.subplots()
+    sns.heatmap(cm, annot=True, fmt='d', cmap="Blues",
                 xticklabels=["Normal","Attack"],
                 yticklabels=["Normal","Attack"])
     ax.set(xlabel="Predicted", ylabel="Actual")
     st.pyplot(fig)
 
-    st.success("All done!")
+    st.success("All done! 🎉")
