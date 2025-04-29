@@ -53,8 +53,9 @@ def preprocess_data(train_df, test_df):
         test_df[col]  = le.transform(test_df[col])
 
     # binary label
-    train_df['label'] = (train_df['label'] != 'normal').astype(int)
-    test_df['label']  = (test_df['label']  != 'normal').astype(int)
+    train_df['label'] = train_df['label'].apply(lambda x: 0 if x.strip() == 'normal' else 1)
+    test_df['label']  = test_df['label'].apply(lambda x: 0 if x.strip() == 'normal' else 1)
+
 
     # --- NEW: guarantee numeric dtypes ---
     X_train = train_df.drop('label', axis=1).apply(pd.to_numeric, errors="coerce").fillna(0)
