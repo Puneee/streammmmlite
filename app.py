@@ -1,6 +1,6 @@
 # app.py
 
-import warnings, io
+import warnings, io, tempfile, os
 warnings.filterwarnings("ignore")
 
 import streamlit as st
@@ -130,65 +130,42 @@ if upload is not None:
     if ext == "csv":
         user_df = pd.read_csv(upload, names=COLUMN_NAMES)
 
-    # --- parse PCAP/PCAPNG via PyShark ---
+    # --- parse PCAP/PCAPNG via PyShark and a temp file ---
     else:
-        caps = pyshark.FileCapture(
-            input_file=io.BytesIO(upload.read()),
-            keep_packets=False
-        )
+        # write to temp file on disk
+        tmp = tempfile.NamedTemporaryFile(suffix='.'+ext, delete=False)
+        tmp.write(upload.read())
+        tmp.flush()
+        tmp.close()
+
+        caps = pyshark.FileCapture(tmp.name, keep_packets=False)
         rows = []
         for pkt in caps:
             try:
-                # Build a row dict for the 41 features
-                # * You can refine each feature extraction as needed *
                 row = {
                   "duration": float(pkt.frame_info.time_epoch),
                   "protocol_type": pkt.transport_layer or "",
                   "service": pkt.highest_layer or "",
                   "flag": pkt.tcp.flags if hasattr(pkt, "tcp") else "",
                   "src_bytes": int(pkt.length),
-                  "dst_bytes": 0,
-                  "land": 0,
-                  "wrong_fragment": 0,
-                  "urgent": 0,
-                  "hot": 0,
-                  "num_failed_logins": 0,
-                  "logged_in": 0,
-                  "num_compromised": 0,
-                  "root_shell": 0,
-                  "su_attempted": 0,
-                  "num_root": 0,
-                  "num_file_creations": 0,
-                  "num_shells": 0,
-                  "num_access_files": 0,
-                  "num_outbound_cmds": 0,
-                  "is_host_login": 0,
-                  "is_guest_login": 0,
-                  "count": 0,
-                  "srv_count": 0,
-                  "serror_rate": 0,
-                  "srv_serror_rate": 0,
-                  "rerror_rate": 0,
-                  "srv_rerror_rate": 0,
-                  "same_srv_rate": 0,
-                  "diff_srv_rate": 0,
-                  "srv_diff_host_rate": 0,
-                  "dst_host_count": 0,
-                  "dst_host_srv_count": 0,
-                  "dst_host_same_srv_rate": 0,
-                  "dst_host_diff_srv_rate": 0,
-                  "dst_host_same_src_port_rate": 0,
-                  "dst_host_srv_diff_host_rate": 0,
-                  "dst_host_serror_rate": 0,
-                  "dst_host_srv_serror_rate": 0,
-                  "dst_host_rerror_rate": 0,
-                  "dst_host_srv_rerror_rate": 0,
-                  "label": "normal"   # dummy, not used
+                  # set other numeric features to 0 or derive as needed
+                  **{f: 0 for f in ["dst_bytes","land","wrong_fragment","urgent","hot", \
+                                  "num_failed_logins","logged_in","num_compromised","root_shell",\
+                                  "su_attempted","num_root","num_file_creations","num_shells",\
+                                  "num_access_files","num_outbound_cmds","is_host_login","is_guest_login",\
+                                  "count","srv_count","serror_rate","srv_serror_rate","rerror_rate",\
+                                  "srv_rerror_rate","same_srv_rate","diff_srv_rate","srv_diff_host_rate",\
+                                  "dst_host_count","dst_host_srv_count","dst_host_same_srv_rate",\
+                                  "dst_host_diff_srv_rate","dst_host_same_src_port_rate",\
+                                  "dst_host_srv_diff_host_rate","dst_host_serror_rate",\
+                                  "dst_host_srv_serror_rate","dst_host_rerror_rate","dst_host_srv_rerror_rate"]},
+                  "label": "normal"
                 }
                 rows.append(row)
             except Exception:
                 continue
         caps.close()
+        os.remove(tmp.name)
         user_df = pd.DataFrame(rows, columns=COLUMN_NAMES)
 
     # --- analyze on button click ---
@@ -212,12 +189,12 @@ if upload is not None:
         y_ae    = (mse_u > ae_thresh).astype(int)
         cnt_ae  = np.bincount(y_ae, minlength=2)
 
-        # show summary gauge
+        # show gauge
         st.metric("⚠️ % traffic flagged as ATTACK (RF)", f"{pct_rf:.2f}%")
         if pct_rf < 5:
             st.success("✅ Looks mostly safe!")
         else:
-            st.warning("🚨 Significant suspicious traffic!")
+            st.warning("🚨 Suspicious traffic detected!")
 
         # breakdown table
         df_out = pd.DataFrame({
@@ -227,9 +204,9 @@ if upload is not None:
         }).set_index("Model")
         st.table(df_out)
 
-        # confusion matrix for RF
-        cm = confusion_matrix(y_rf, y_rf)  # demo against itself
+        # confusion matrix (RF vs itself as placeholder)
+        cm = confusion_matrix(y_rf, y_rf)
         fig, ax = plt.subplots()
-        sns.heatmap(cm,annot=True,fmt="d",cmap="Blues",ax=ax)
-        ax.set(xlabel="Pred", ylabel="True")
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
+        ax.set(xlabel="Predicted", ylabel="Actual")
         st.pyplot(fig)
