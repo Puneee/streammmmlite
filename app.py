@@ -44,7 +44,7 @@ def preprocess_data(train_df, test_df):
     for col in categorical_cols:
         le = LabelEncoder()
         combined_data = pd.concat([train_df[col], test_df[col]], axis=0)
-        le.fit(combined)
+        le.fit(combined_data)
         train_df[col] = le.transform(train_df[col])
         test_df[col] = le.transform(test_df[col])
         encoders[col] = le
